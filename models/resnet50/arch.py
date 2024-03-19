@@ -1,3 +1,8 @@
+# Author: Eugene Yong
+# Date: March 18, 2024
+# Final Project: AI Image Detector
+# Code Adapted From: My pass assignments in CS 579 (Trustworth Machine Learning)
+
 import torch.nn as nn
 
 class Bottleneck(nn.Module):

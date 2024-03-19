@@ -14,7 +14,7 @@ from tqdm import tqdm
 from sklearn.metrics import confusion_matrix
 
 from datasets import data_loader
-from helper import get_criterion, get_optimizer, get_transform
+from helper import get_criterion, get_optimizer, get_transform, validation_metrics
 from path import get_report_dir
 from models.resnet50.arch import ResNet50
 
@@ -26,31 +26,6 @@ logging.basicConfig(
 
 # Set device to cuda if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def validation_metrics(model, loader, criterion):
-    model.eval()
-    sum_loss = 0
-    correct = 0
-    total = 0
-    y_true = []
-    y_pred = []
-    for i, (data, _, target) in tqdm(enumerate(loader), total=len(loader)):
-        data, target = data.to(device), target.to(device)
-        pred = model(data)
-        _, pred_label = torch.max(pred, 1)
-        loss = criterion(pred, target)
-
-        sum_loss += loss.item() * len(data)
-        correct += (pred_label == target).sum().item()
-        total += len(data)
-
-        y_true.extend(target.cpu().numpy())
-        y_pred.extend(pred_label.cpu().numpy())
-
-
-    cf_matrix = confusion_matrix(y_true, y_pred)
-    print(f'Confusion Matrix: {cf_matrix}')
-    return sum_loss/total, correct/total
 
 def train_model(model, train_loader, val_loader, optimizer, criterion, args):
     train_losses = []
@@ -67,6 +42,7 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, args):
         correct = 0
         total = 0
         for i, (data, _, target) in tqdm(enumerate(train_loader), total=len(train_loader)):
+            data = data.permute(0, 3, 1, 2).float()
             data, target = data.to(device), target.to(device)
 
             pred = model(data)
@@ -90,7 +66,7 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, args):
 
         if val_loader:
             logging.info("calculating validation metrics")
-            val_loss, val_acc = validation_metrics(model, val_loader, criterion)
+            val_loss, val_acc, val_precision, val_recall, val_f_1, val_cf_matrix = validation_metrics(model, val_loader, criterion)
         else:
             val_loss, val_acc = 0.0, 0.0
 
@@ -99,9 +75,9 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, args):
         val_losses.append(val_loss)
         val_accs.append(val_acc)
 
-        logging.info("Epoch %d train loss %f, train acc %.3f, test loss %f, test acc %.3f" % 
-                    (epoch+1, train_loss, train_acc, val_loss, val_acc))
-
+        logging.info("Epoch %d train loss %f, train acc %.3f, test loss %f, test acc %.3f, test precision %.3f, test recall %.3f, test f-1 %.3f" % 
+                    (epoch+1, train_loss, train_acc, val_loss, val_acc, val_precision, val_recall, val_f_1))
+        print(val_cf_matrix)
         
         if val_loss < min_val_loss:
             min_val_loss = val_loss
@@ -178,6 +154,8 @@ if __name__ == '__main__':
                         help='number of epochs to train (default: 20)')
     parser.add_argument('--batch-size', type=int, default=64, metavar='64',
                         help='input batch size for training (default: 64)')
+    parser.add_argument('--data-dir', type=str, default='../data/ai-human-images/data', metavar='../data/ai-human-images/data',
+                        help='specify root directory that contain train/val/test folder (default= ../data/ai-human-images/data)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='0.001',
                         help='learning rate (default: 0.001)')
     parser.add_argument('--loss', type=str, default='crossEntropy', metavar='crossEntropy',
@@ -188,8 +166,6 @@ if __name__ == '__main__':
                         help='specify if do not want the trained model be saved (default: False)')
     parser.add_argument('--seed', type=int, default=42, metavar='42',
                         help='specify seed for random (default: 42)')
-    parser.add_argument('--weight-decay', type=float, default=0, metavar='0',
-                        help='specify weight decay rate for optimizer (default: 0)')
     parser.add_argument('--horizontal-flip', action='store_true',
                         help='specify if want the image data be flip horizontally at random (default: False)')
     parser.add_argument('--rotation', action='store_true',
@@ -203,7 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--weighted-version', action='store_true',
                         help='specify if want to perform weighted random sampling based on version while training. More recent version get sample more frequently (default: False)')
     parser.add_argument('--versions', nargs='+', type=int,
-                        help='Specify the versions want to be included in training. Not specifying means include all versions. Usage: --versions 1 2 (default: None)')
+                        help='specify the versions want to be included in training. Not specifying means include all versions. Usage: --versions 1 2 (default: None)')
 
     args = parser.parse_args()
     print(args)
@@ -218,7 +194,8 @@ if __name__ == '__main__':
     transform = get_transform(args)
     data_versions = args.versions
 
-    train_loader, val_loader, class_weights = data_loader(batch_size=args.batch_size, 
+    train_loader, val_loader, class_weights = data_loader(data_dir=args.data_dir,
+                                                          batch_size=args.batch_size, 
                                                           transform=transform,
                                                           train=True,
                                                           versions=data_versions,

@@ -12,6 +12,7 @@ import pandas as pd
 
 from torchvision import transforms
 from tqdm import tqdm
+from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
 
 # Set device to cuda if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -24,7 +25,7 @@ def get_criterion(loss, class_weights):
     
 def get_optimizer(args, parameters):
     if args.optimizer == 'adam':
-        return torch.optim.Adam(parameters, args.lr, amsgrad=True, weight_decay=args.weight_decay)
+        return torch.optim.Adam(parameters, args.lr, amsgrad=True)
     elif args.optimizer == 'sgd':
         return torch.optim.SGD(parameters, args.lr, 0.9)
     
@@ -63,3 +64,33 @@ def load_parquets(dir, columns, desc):
         for parquet_file in tqdm(parquets, total=len(parquets), desc=desc)
     )
     return df
+
+def validation_metrics(model, loader, criterion):
+    model.eval()
+    sum_loss = 0
+    correct = 0
+    total = 0
+    y_true = []
+    y_pred = []
+    styles = []
+    for i, (data, style, target) in tqdm(enumerate(loader), total=len(loader)):
+        data = data.permute(0, 3, 1, 2).float()
+        data, target = data.to(device), target.to(device)
+        pred = model(data)
+        _, pred_label = torch.max(pred, 1)
+        loss = criterion(pred, target)
+
+        sum_loss += loss.item() * len(data)
+        correct += (pred_label == target).sum().item()
+        total += len(data)
+
+        y_true.extend(target.cpu().numpy())
+        y_pred.extend(pred_label.cpu().numpy())
+        styles.extend(style.cpu().numpy())
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    styles = np.array(styles)
+    cf_matrix = confusion_matrix(y_true, y_pred)
+    precision, recall, f_1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary')
+    return sum_loss/total, correct/total, precision, recall, f_1, cf_matrix

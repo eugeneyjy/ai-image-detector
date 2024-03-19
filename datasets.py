@@ -23,15 +23,11 @@ logging.basicConfig(
 
 class AiHumanImageDataset(Dataset):
     def __init__(self, dir, transform=None, split='train', versions=None):
-        """
-        Arguments:
-            real_folder (string): Path to the folder with human generated art data
-            fake_folder (string): Path to the folder with ai generated art data
-        """
         columns = ['image', 'style', 'class', 'version']
         self.df = load_parquets(dir, columns, desc=f"Loading from {split} data")
         self.max_style_idx = self.df['style'].value_counts().argmax()
         self.transform = transform
+        self.split = split
         if versions:
             self.df = self.df[self.df['version'].isin(versions)]
 
@@ -46,9 +42,9 @@ class AiHumanImageDataset(Dataset):
         image = cv2.imdecode(image, cv2.IMREAD_COLOR)
         image = cv2.resize(image, (224, 224))
         style = self.df.iloc[idx]['style']
-        basic_transform = transforms.ToTensor()
-        image = basic_transform(image)
+        # Challenge 2: Strategy 3
         if style != self.max_style_idx and self.transform:
+            image = torch.from_numpy(image)
             image = self.transform(image)
         target_class = self.df.iloc[idx]['class']
 
@@ -61,12 +57,15 @@ def data_loader(data_dir, batch_size, transform=None, train=True, versions=None,
 
         sampler = None
         shuffle = True
+
+        # Challenge 1: Strategy 2
         if weighted_class:
             class_counts = train_data.df['class'].value_counts()
             sampler_weights = [1/class_counts[i] for i in train_data.df['class'].values]
             sampler = WeightedRandomSampler(sampler_weights, num_samples=len(train_data), replacement=True)
             shuffle = False
 
+        # Challenge 1: Strategy 3
         class_weights = None
         if cost_sensitive_learning:
             class_weights=compute_class_weight(class_weight='balanced', 
@@ -74,12 +73,14 @@ def data_loader(data_dir, batch_size, transform=None, train=True, versions=None,
                                             y=train_data.df['class'].values)
             class_weights=torch.tensor(class_weights,dtype=torch.float)
 
+        # Challenge 2: Strategy 2
         if weighted_style:
             style_count = train_data.df['style'].value_counts()
             sampler_weights = [1/style_count[i] for i in train_data.df['style'].values]
             sampler = WeightedRandomSampler(sampler_weights, num_samples=len(train_data), replacement=True)
             shuffle = False
 
+        # Challenge 3: Strategy 3
         if weighted_version:
             sampler_weights = [version for version in train_data.df['version'].values]
             sampler = WeightedRandomSampler(sampler_weights, num_samples=len(train_data), replacement=True)
@@ -101,7 +102,7 @@ def data_loader(data_dir, batch_size, transform=None, train=True, versions=None,
         return train_loader, val_loader, class_weights
 
     else:
-        test_data = AiHumanImageDataset(dir=os.path.join(data_dir, 'test'), split='test')
+        test_data = AiHumanImageDataset(dir=os.path.join(data_dir, 'test'), split='test', versions=versions)
 
         test_loader = DataLoader(
             dataset=test_data,
